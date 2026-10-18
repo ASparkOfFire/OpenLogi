@@ -775,6 +775,10 @@ fn callout_lane_is_lower(idx: usize) -> bool {
     idx.is_multiple_of(2)
 }
 
+fn binding_after_pick(current: Option<&Action>, picked: Action) -> Option<Action> {
+    (current != Some(&picked)).then_some(picked)
+}
+
 /// The scrollable config panel for the selected key. Lists the same action
 /// catalog the mouse picker uses, plus a Power User section. Renders the rows
 /// directly (no popover) in a tall card.
@@ -817,9 +821,14 @@ impl FunctionRowView {
 
         let view_for_pick = view.clone();
         let target_for_pick = target.clone();
+        let current_for_pick = current.clone();
         let on_pick: PickFn = Rc::new(move |action, _window, cx| {
             AppState::apply(cx, |state| {
-                commit_key_action(state, &target_for_pick, Some(action))
+                commit_key_action(
+                    state,
+                    &target_for_pick,
+                    binding_after_pick(current_for_pick.as_ref(), action),
+                )
             });
             view_for_pick.update(cx, |_, vcx| vcx.notify());
         });
@@ -905,25 +914,25 @@ fn panel_action_rows(
 ) -> Vec<gpui::Div> {
     let mut children = action_rows("panel-action", current, on_pick, *pal);
 
-    let power_user_actions: &[(PowerUserKind, &str, &'static str)] = &[
+    let power_user_actions: &[(PowerUserKind, SharedString, &'static str)] = &[
         (
             PowerUserKind::TypeText,
-            "Type Text…",
+            tr!("actions.type_text"),
             "action-icons/keyboard.svg",
         ),
         (
             PowerUserKind::RunAppleScript,
-            "Run AppleScript…",
+            tr!("actions.run_applescript"),
             "action-icons/terminal.svg",
         ),
         (
             PowerUserKind::RunShellCommand,
-            "Run Shell Command…",
+            tr!("actions.run_shell_command"),
             "action-icons/terminal.svg",
         ),
         (
             PowerUserKind::Workflow,
-            "Workflow…",
+            tr!("actions.workflow"),
             "action-icons/list-checks.svg",
         ),
     ];
@@ -951,7 +960,7 @@ fn panel_action_rows(
                     MenuRow::new(format!("panel-power-{idx}"))
                         .selected(selected)
                         .role(Role::MenuItem)
-                        .aria_label(*label)
+                        .aria_label(label.clone())
                         .child(
                             h_flex()
                                 .items_center()
@@ -963,7 +972,7 @@ fn panel_action_rows(
                                         .flex_none()
                                         .text_color(pal.text_muted),
                                 )
-                                .child(div().child((*label).to_string())),
+                                .child(div().child(label.clone())),
                         )
                         .when(selected, |s| {
                             s.child(
