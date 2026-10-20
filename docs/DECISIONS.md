@@ -4,6 +4,146 @@ Durable "why we did it this way" records that are not obvious from the code.
 Add a dated entry when a non-obvious architectural or dependency decision is
 made or revisited.
 
+## 2026-10: One application on every platform is an `[apps]` alias
+
+A per-app profile was keyed by the identifier one platform reports: a macOS
+bundle id, a Linux application id, or a Windows executable path. The same
+application has a different identifier on each platform, so a profile written
+on one did not apply on another. Logi Options+ 2.8 solves this with one
+`applicationId` and a list of detection rules per platform
+(`applications.json`). OpenLogi adds the same layer as a table in
+`config.toml`, and accepts the config format change (schema 9).
+
+- **A separate table, referenced by key.** `[apps.<alias>]` lists the
+  identifiers of one application per platform. A profile references it as
+  `app:<alias>`, the same way the existing `exe:<filename>` key names an
+  executable. Profiles keyed by a platform identifier keep working unchanged,
+  so no existing file needs to move. Later features that select an
+  application, such as scene templates, can take the same `app:` key.
+- **The most specific key wins.** The matcher tries the exact identifier, then
+  `exe:<filename>`, then the alias that lists the exact identifier, then the
+  alias that lists `exe:<filename>`. A profile keyed by the platform's own
+  identifier therefore wins over an alias profile. That lets one platform
+  differ from a shared profile.
+- **One alias per identifier.** Two aliases that list the same identifier for
+  one platform stop the load, because the matcher could not choose between
+  them. An identifier can repeat across platforms.
+- **An undefined alias stops the load.** A misspelled `app:` key would match
+  nothing and silently do nothing, so loading rejects it, as the strict schema
+  rejects other mistakes. Windows identifiers must be lower-case for the same
+  reason: Windows reports lower-case paths.
+- **One matcher.** `openlogi_core::app` owns both the `exe:` fallback and the
+  alias lookup for button profiles and Actions Ring layouts, and an ast-grep
+  rule keeps a second copy out.
+- **The desktop app reads aliases but does not write them yet.** It shows an
+  alias profile under the alias name and stops offering an application that
+  already runs under a profile. Sharing a profile across platforms from the
+  GUI, and a hint for an alias with no identifier on this platform, need new
+  strings in every locale. A later change adds them.
+
+Verified with unit tests, which CI runs on macOS, Linux, and Windows. Nobody
+has used one config on two platforms with a real application yet.
+
+## 2026-10: On Wayland, the ring opens a layer-shell surface on each display
+
+A Wayland client cannot read the global cursor position or place its own
+windows. Since #1004 the overlay has opened one ring window per display, and
+each window draws the ring where the pointer enters it. On GNOME 50 with two
+monitors, both rings appeared on one monitor (#1901). An ordinary window
+cannot name its output, Mutter put both windows on one display, and each
+window that heard the pointer drew a ring of its own.
+
+- **Layer-shell surfaces first.** A `wlr-layer-shell` surface names its
+  output. Each display gets one on the overlay layer, anchored to all four
+  edges and without keyboard focus. The surface has no size of its own, so
+  the compositor sizes it to the display. GPUI derives display bounds from an
+  integer scale, which is wrong under fractional scaling, so the overlay does
+  not use them here.
+- **Ordinary windows as the fallback.** GNOME does not offer
+  `wlr-layer-shell`, so there the overlay opens the maximized windows it
+  opened before. The overlay remembers the first refusal for the life of the
+  process, for rings and notices alike. GPUI binds the compositor's globals
+  once, and each refused request leaves behind the `wl_surface` GPUI created
+  for it.
+- **One window draws the ring.** The windows of one ring share one record of
+  which window heard the pointer last, and only that window draws the ring.
+  When the windows are stacked on one display, the last to hear the pointer
+  is the one on top, the only one a click can reach. A window that loses the
+  ring also drops its hovered slot.
+
+Verified with unit tests and a GPUI test that opens two ring windows for one
+ring. Nobody has run the Wayland paths on screen yet. CI builds and tests
+them on Linux.
+
+## 2026-10: The lock-key indicator follows Logi Options+ 2.8, without Fn Lock
+
+Logi Options+ 2.8 shows lock-key changes in its own on-screen indicator. Its
+`0x4220` handler compares each broadcast bitmask with the last one and posts
+one indicator per changed bit. Its `osd_resources.json` shows Caps Lock on
+every platform and Num Lock and Scroll Lock on Windows only. OpenLogi follows
+both rules.
+
+- **A baseline before the first change.** The agent reads the keyboard's lock
+  state (`GetLockState`) when it learns the device, and announces only bits
+  that change after that. Num Lock is usually on under Windows, so a keyboard
+  that connects must not announce it. A keyboard that goes offline, or that
+  reconnects between two scans, loses its baseline and is read again. Options+
+  probably reads a baseline at start too; that part of the disassembly is not
+  verified.
+- **The agent sees every change; the indicator shows the latest.** The device
+  layer hands changes to the agent in a small queue, not a latest-value cell,
+  so a change the platform rule drops (Num Lock on macOS) cannot hide one it
+  keeps (Caps Lock) reported with it. The indicator shows only the latest
+  change, so presses in quick succession can skip the states between them.
+- **The agent owns the indicator.** It shows a change for 1.5 seconds, the
+  backlight indicator's time, and a newer change replaces it. The overlay
+  hides the indicator when the connection to the agent drops, as it does for
+  notices.
+- **On by default.** One global switch, `lock_key_notifications`, turns it
+  off. The Options+ default for its setting was not found in the static
+  analysis.
+- **No Fn Lock yet.** Options+ also shows "Media Keys" and "F-Keys". OpenLogi
+  writes the Fn Lock state back to a keyboard when it reconnects, and the
+  keyboard reports that write like a key press, so the indicator would show
+  on every reconnect. That needs its own decision.
+
+Verified with unit tests. Nobody has seen the indicator on screen with a real
+keyboard yet.
+
+## 2026-10: Low-battery notices are drawn by the overlay, not sent as OS notifications
+
+Logi Options+ 2.8 shows a low battery in its own on-screen toast
+(`logi::overlay::battery_notification`, the `low_battery` entry of its
+`notification_resources.json`), on by default. It sends OS notifications only
+for macros and integrations. OpenLogi follows the same split.
+
+- **No notification permission.** An OS notification needs authorization on
+  macOS, a registered app identity on Windows, and a notification daemon on
+  Linux. The overlay runs whenever the agent is armed, with or without the
+  settings app, and already places windows per display.
+- **One rule for low.** `BatteryInfo::needs_attention` in `openlogi-core`
+  decides it for the agent's notice and the settings app's battery colour, and
+  an ast-grep rule keeps a second copy out.
+- **The agent owns a notice.** It decides when to post one and when it ends
+  (8 seconds), so an overlay that starts or reconnects sees only the notices
+  that are current. Notices travel in their own observation cell
+  (`observe_notices`), not in the agent snapshot, so a notice does not wake
+  every state observer. When the connection to the agent drops, the overlay
+  clears the cards at once, because nothing else would ever end them. The
+  backlight indicator follows the same rule.
+- **Once per discharge.** A device is announced when it becomes low, and
+  again only after it charges or reads 30% or more, so a reading that wobbles
+  around 20% does not repeat the notice.
+- **Not click-through.** The card sits at the bottom centre of the usable area
+  of the display under the cursor (macOS visible frame, Windows work area,
+  Wayland layer-shell surface anchored to the bottom edge, X11 display). It
+  opens without taking focus, and a click closes it.
+
+Verified with unit tests, and on screen on macOS against the mock agent's
+demo: the card appears at the bottom centre above the Dock and closes after 8
+seconds. A click to close is covered by unit tests only. The Windows and Linux
+windows are checked only by CI builds; nobody has seen them on screen yet.
+
 ## 2026-10: Litra is reached over HID++ `0x1990`, with the raw report as fallback
 
 The "raw" Litra report `[0x11, 0xff, 0x04, …]` was always a HID++ 2.0 long
