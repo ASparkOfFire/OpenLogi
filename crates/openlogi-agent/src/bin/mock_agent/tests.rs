@@ -622,6 +622,8 @@ fn unpairing_drops_the_slot_from_the_rendered_inventory() {
     assert_eq!(state.unpair(&direct), Err(PairingFailure::ReceiverNotFound));
 }
 
+#[path = "tests/control.rs"]
+mod control;
 #[path = "tests/corpus.rs"]
 mod corpus;
 
