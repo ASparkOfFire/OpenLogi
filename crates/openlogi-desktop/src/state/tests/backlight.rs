@@ -28,7 +28,7 @@ fn lit() -> BacklightState {
         current_level: 2,
         nb_levels: 5,
         power_save: true,
-        duration_secs: Some(duration(30)),
+        duration: Some(duration(30)),
         controls: BacklightControls::AUTOMATIC
             | BacklightControls::LEVEL
             | BacklightControls::POWER_SAVE

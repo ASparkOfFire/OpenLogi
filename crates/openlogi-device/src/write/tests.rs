@@ -391,7 +391,7 @@ async fn shared_read_and_lighting_apis_use_the_supplied_channel() -> Result<(), 
             current_level: 4,
             nb_levels: 8,
             power_save: false,
-            duration_secs: None,
+            duration: None,
             controls: BacklightControls::default(),
         }
     );

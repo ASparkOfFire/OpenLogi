@@ -888,13 +888,13 @@ fn semantic_read_payloads() {
         current_level: 4,
         nb_levels: 8,
         power_save: true,
-        duration_secs: BacklightDuration::try_from(30).ok(),
+        duration: BacklightDuration::try_from(30).ok(),
         controls: BacklightControls::AUTOMATIC
             | BacklightControls::LEVEL
             | BacklightControls::DURATION,
     });
     // v36 appends `power_save` and `controls`; the timer's `duration` and
-    // `duration_secs` ride v41 as the controls bit set (30 seconds) — the
+    // `duration` ride v41 as the controls bit set (30 seconds) — the
     // validated timer now serializes as an `Option` tag plus its seconds.
     assert_wire(&backlight, "000101020408010b011e");
 

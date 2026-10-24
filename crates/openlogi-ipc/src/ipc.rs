@@ -149,8 +149,8 @@ pub use succession::Identity;
 ///      and [`SavedConfigVerdict`] appended, so a GUI distinguishes its accepted
 ///      saved revision from an external edit that replaced it before reload.
 ///      `BacklightControls` became the bit set of the changes the keyboard
-///      offers, and `BacklightControls::duration`, `BacklightState::duration_secs`
-///      and `BacklightChange::Duration` appended — the `0x1982` backlight
+///      offers, and `BacklightState::duration` and
+///      `BacklightChange::Duration` appended — the `0x1982` backlight
 ///      timer, five-second steps up to two hours.
 pub const PROTOCOL_VERSION: u32 = 41;
 

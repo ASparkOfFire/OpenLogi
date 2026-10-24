@@ -84,7 +84,7 @@ fn status_from_firmware(status: FirmwareStatus) -> BacklightStatus {
 /// the runtime feature version and the level count.
 fn controls_from(options: BacklightOptions, version: u8, nb_levels: u8) -> BacklightControls {
     let manual = options.contains(BacklightOptions::PERM_MANUAL_SUPPORTED);
-    let mut controls = BacklightControls::EMPTY;
+    let mut controls = BacklightControls::empty();
     // A switch between the sensor and a held level needs both.
     if manual && options.contains(BacklightOptions::AUTO_MODE_SUPPORTED) {
         controls |= BacklightControls::AUTOMATIC;
@@ -127,7 +127,7 @@ fn state_from(config: &BacklightConfig, info: &BacklightInfo, version: u8) -> Ba
         // The timer Logi Options+ shows is the hands-out fade-out. Below the
         // duration version the bytes are preserved on other writes but not
         // reported as a timer software set.
-        duration_secs: if version >= DURATION_VERSION {
+        duration: if version >= DURATION_VERSION {
             BacklightDuration::from_units(config.duration_hands_out)
         } else {
             None
@@ -652,7 +652,7 @@ mod tests {
     async fn a_duration_sets_both_inactivity_fades_and_keeps_the_rest() -> Result<(), WriteError> {
         let (state, writes) = update(Keyboard::v3(), BacklightChange::Duration(duration(15))).await;
         let state = state?;
-        assert_eq!(state.duration_secs, Some(duration(15)));
+        assert_eq!(state.duration, Some(duration(15)));
         assert_eq!(state.mode, BacklightMode::Automatic);
         assert!(state.controls.contains(BacklightControls::DURATION));
         // 15 seconds is 3 units. Powered stays 3; the fourth duration stays
@@ -750,7 +750,7 @@ mod tests {
         );
         assert_eq!(
             controls_from(BacklightOptions::empty(), 2, 8),
-            BacklightControls::EMPTY
+            BacklightControls::empty()
         );
     }
 

@@ -1155,7 +1155,7 @@ mod tests {
             current_level: 3,
             nb_levels: 8,
             power_save: false,
-            duration_secs: None,
+            duration: None,
             controls: BacklightControls::AUTOMATIC
                 | BacklightControls::LEVEL
                 | BacklightControls::POWER_SAVE

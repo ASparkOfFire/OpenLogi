@@ -227,12 +227,17 @@ fn duration_pills(state: BacklightState, steps: &[u16]) -> impl IntoElement {
         .gap_2()
         .flex_wrap()
         .children(steps.iter().copied().map(|seconds| {
+            #[expect(
+                clippy::expect_used,
+                reason = "every panel step is covered by \
+                          the-desktop step-validity test; a const constructor does not exist"
+            )]
             let duration = BacklightDuration::try_from(seconds)
                 .expect("the panel only offers steps the keyboard can store");
             Button::new(("backlight-duration", usize::from(seconds)))
                 .compact()
                 .label(duration_label(seconds))
-                .selected(Some(duration) == state.duration_secs)
+                .selected(Some(duration) == state.duration)
                 .disabled(!state.enabled)
                 .on_click(move |_event, _window, cx| {
                     commit(cx, BacklightChange::Duration(duration));
@@ -262,7 +267,7 @@ fn duration_label(seconds: u16) -> gpui::SharedString {
 /// The usual explanation, or the seconds the keyboard actually stored when
 /// they are not one of the steps this row is showing.
 fn duration_caption(state: BacklightState, extended: bool) -> gpui::SharedString {
-    match state.duration_secs {
+    match state.duration {
         Some(timer) if !duration_step(timer.seconds(), extended) => tr!(
             "device.backlight_duration_other",
             seconds => timer.seconds()
@@ -317,7 +322,10 @@ mod tests {
         BacklightDuration::try_from(seconds).expect("a listed step is a valid duration")
     }
 
-    use super::{BacklightFacts, backlight_card, duration_caption, lit_caption};
+    use super::{
+        BacklightFacts, EXTENDED_DURATION_SECONDS, SHORT_DURATION_SECONDS, backlight_card,
+        duration_caption, lit_caption,
+    };
     use crate::services::i18n::LOCALE_LOCK;
     use crate::state::{DeviceKey, Load};
     use crate::ui::theme;
@@ -339,7 +347,7 @@ mod tests {
             current_level: 2,
             nb_levels: 5,
             power_save: true,
-            duration_secs: Some(duration(30)),
+            duration: Some(duration(30)),
             controls,
         }
     }
@@ -353,10 +361,7 @@ mod tests {
                 key: DeviceKey::from("direct:046d:b35b:unit:a393cae0"),
                 load: Load::Ready(Arc::new(self.0)),
                 reachable: true,
-                extended: self
-                    .0
-                    .duration_secs
-                    .is_some_and(|timer| timer.seconds() > 30),
+                extended: self.0.duration.is_some_and(|timer| timer.seconds() > 30),
             };
             div()
                 .w(px(360.))
@@ -461,7 +466,7 @@ mod tests {
             tr!("device.backlight_duration_description")
         );
         let longer = BacklightState {
-            duration_secs: Some(duration(55)),
+            duration: Some(duration(55)),
             ..offered
         };
         assert_eq!(
@@ -470,12 +475,26 @@ mod tests {
         );
         // A two-hour timer is one of the extended steps, so it needs no aside.
         let max = BacklightState {
-            duration_secs: Some(duration(7_200)),
+            duration: Some(duration(7_200)),
             ..offered
         };
         assert_eq!(
             duration_caption(max, true),
             tr!("device.backlight_duration_description")
         );
+    }
+
+    #[test]
+    fn every_step_the_panel_shows_is_a_valid_timer() {
+        // The render path converts a step the user clicks with `expect`,
+        // which stands only while every listed step is one the keyboard can
+        // store.
+        for seconds in SHORT_DURATION_SECONDS
+            .into_iter()
+            .chain(EXTENDED_DURATION_SECONDS)
+        {
+            BacklightDuration::try_from(seconds)
+                .expect("a panel step is within the two hours `0x1982` stores");
+        }
     }
 }

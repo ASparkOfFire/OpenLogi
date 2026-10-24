@@ -161,7 +161,7 @@ fn print_state(label: &str, state: BacklightState) {
 
 /// The timer this keyboard reports, or that it does not offer one.
 fn duration_label(state: BacklightState) -> String {
-    match state.duration_secs {
+    match state.duration {
         Some(timer) => format!("{}s", timer.seconds()),
         None => "unsupported".to_string(),
     }

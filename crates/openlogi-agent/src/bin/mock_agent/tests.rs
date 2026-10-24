@@ -218,7 +218,7 @@ async fn profile_backed_wheel_and_backlight_reads_return_exact_values() {
         current_level: 3,
         nb_levels: 8,
         power_save: true,
-        duration_secs: Some(
+        duration: Some(
             openlogi_hid::BacklightDuration::try_from(30).expect("30 seconds is a valid timer"),
         ),
         controls: openlogi_hid::BacklightControls::AUTOMATIC
@@ -247,7 +247,7 @@ async fn backlight_changes_are_kept_and_unoffered_ones_refused() {
         current_level: 3,
         nb_levels: 8,
         power_save: true,
-        duration_secs: None,
+        duration: None,
         controls: openlogi_hid::BacklightControls::AUTOMATIC
             | openlogi_hid::BacklightControls::POWER_SAVE,
     };
