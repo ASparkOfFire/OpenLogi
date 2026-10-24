@@ -121,9 +121,6 @@ pub use succession::Identity;
 ///      battery. `Agent::observe_lock_keys`, [`LockKeyObservation`] and
 ///      [`LockKeyChange`] appended — the lock key a keyboard turned on or
 ///      off over HID++ `0x4220`, for the overlay's transient indicator.
-///      `BacklightControls::duration`, `BacklightState::duration_secs` and
-///      `BacklightChange::Duration` also appended — the `0x1982` backlight
-///      timer, 5 to 30 seconds.
 /// v38: `AgentStatus::secure_input` and [`SecureInput`] appended — whether
 ///      macOS Secure Event Input is hiding key presses from the hook, and
 ///      the app macOS attributes it to. `Capabilities::pointer_scaling`
@@ -151,6 +148,10 @@ pub use succession::Identity;
 ///      guarded-write/superseded errors; `Agent::reload_saved_config_with_verdict`
 ///      and [`SavedConfigVerdict`] appended, so a GUI distinguishes its accepted
 ///      saved revision from an external edit that replaced it before reload.
+///      `BacklightControls` became the bit set of the changes the keyboard
+///      offers, and `BacklightControls::duration`, `BacklightState::duration_secs`
+///      and `BacklightChange::Duration` appended — the `0x1982` backlight
+///      timer, five-second steps up to two hours.
 pub const PROTOCOL_VERSION: u32 = 41;
 
 /// Environment variable through which the agent hands a supervised helper the
