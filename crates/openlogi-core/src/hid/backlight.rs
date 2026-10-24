@@ -7,6 +7,8 @@
 use std::fmt;
 
 use nutype::nutype;
+use serde::de::{self, MapAccess, Visitor};
+use serde::ser::SerializeStruct as _;
 use serde::{Deserialize, Serialize};
 use thiserror::Error as ThisError;
 
@@ -101,11 +103,12 @@ pub struct BacklightState {
 /// A bit set: the offers are independent — the `0x1982` layout reports some
 /// without others, and a named-field struct of bools is exactly the shape
 /// `clippy::struct_excessive_bools` hears as an untyped state machine.
-/// Crosses the agent↔GUI IPC inside [`BacklightState`], so the bit layout is
-/// wire format — changes require a `PROTOCOL_VERSION` bump (guarded by
-/// `openlogi-ipc/tests/wire_format.rs`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+/// Crosses the agent↔GUI IPC inside [`BacklightState`] as a single byte —
+/// changes to that layout require a `PROTOCOL_VERSION` bump (guarded by
+/// `openlogi-ipc/tests/wire_format.rs`) — while recorded profiles keep the
+/// released schema's four-field object, so a profile recorded by v0.8.x
+/// still loads and re-records identically.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BacklightControls(u8);
 
 impl BacklightControls {
@@ -152,7 +155,7 @@ impl BacklightControls {
     /// Whether `change` is one this keyboard accepts, ignoring the level
     /// range and the duration range: [`BacklightChange::Level`] also needs a
     /// level below [`BacklightState::nb_levels`], and
-    /// [`BacklightChange::Duration`] a multiple of five seconds up to two hours.
+    /// [`BacklightChange::Duration`] a validated timer.
     #[must_use]
     pub const fn allow(self, change: BacklightChange) -> bool {
         match change {
@@ -164,6 +167,11 @@ impl BacklightControls {
         }
     }
 }
+
+/// Field names of the object shape a released build recorded into profiles.
+/// `duration` may be missing: records written before the v0.8.x timer
+/// shipped predate it.
+const CONTROLS_FIELDS: [&str; 4] = ["automatic", "level", "power_save", "duration"];
 
 impl std::ops::BitOr for BacklightControls {
     type Output = Self;
@@ -198,6 +206,90 @@ impl std::ops::Not for BacklightControls {
 
     fn not(self) -> Self::Output {
         Self(!self.0)
+    }
+}
+
+impl Serialize for BacklightControls {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            // The four-field object the released schema wrote, so a recorded
+            // profile keeps its byte shape on re-record.
+            let mut object = serializer.serialize_struct("BacklightControls", 4)?;
+            object.serialize_field("automatic", &self.contains(Self::AUTOMATIC))?;
+            object.serialize_field("level", &self.contains(Self::LEVEL))?;
+            object.serialize_field("power_save", &self.contains(Self::POWER_SAVE))?;
+            object.serialize_field("duration", &self.contains(Self::DURATION))?;
+            object.end()
+        } else {
+            // The IPC payload carries the set as one byte.
+            self.bits().serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BacklightControls {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_any(ControlsVisitor::default())
+        } else {
+            u8::deserialize(deserializer).map(Self::from_bits_retain)
+        }
+    }
+}
+
+/// Reads either recorded profile shape: the released object or — so a future
+/// schema change cannot strand a reader — the set as its bit number.
+#[derive(Default)]
+struct ControlsVisitor {
+    controls: BacklightControls,
+}
+
+impl<'de> Visitor<'de> for ControlsVisitor {
+    type Value = BacklightControls;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "the recorded four-field backlight controls object or the controls as a bit number",
+        )
+    }
+
+    /// The recorded object shape: missing bits are `false`, matching the
+    /// `#[serde(default)]` the removed fields carried.
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut value = Self::default();
+        while let Some(key) = map.next_key::<String>()? {
+            let bit = match key.as_str() {
+                "automatic" => BacklightControls::AUTOMATIC,
+                "level" => BacklightControls::LEVEL,
+                "power_save" => BacklightControls::POWER_SAVE,
+                "duration" => BacklightControls::DURATION,
+                other => return Err(de::Error::unknown_field(other, &CONTROLS_FIELDS)),
+            };
+            if map.next_value()? {
+                value.controls |= bit;
+            }
+        }
+        Ok(value.controls)
+    }
+
+    /// A future build may record the set as its bit number.
+    fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+        let bits = u8::try_from(value).map_err(|_| {
+            de::Error::invalid_value(
+                de::Unexpected::Unsigned(value),
+                &"a backlight controls bit set within one byte",
+            )
+        })?;
+        Ok(BacklightControls::from_bits_retain(bits))
     }
 }
 
