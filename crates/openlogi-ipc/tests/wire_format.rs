@@ -888,16 +888,14 @@ fn semantic_read_payloads() {
         nb_levels: 8,
         power_save: true,
         duration_secs: 30,
-        controls: BacklightControls {
-            automatic: true,
-            level: true,
-            power_save: false,
-            duration: true,
-        },
+        controls: BacklightControls::AUTOMATIC
+            | BacklightControls::LEVEL
+            | BacklightControls::DURATION,
     });
-    // v36 appends `power_save` and `controls`; v37 appends `duration` and
-    // `duration_secs` (30 seconds, one varint byte).
-    assert_wire(&backlight, "00010102040801010100011e");
+    // v36 appends `power_save` and `controls`; the timer's `duration` and
+    // `duration_secs` ride v41 as the controls bit set (30 seconds, one
+    // varint byte) instead of four bool fields.
+    assert_wire(&backlight, "000101020408010b1e");
 
     let fn_lock: Result<FnLockState, WriteError> = Ok(FnLockState {
         fn_lock: true,

@@ -14,7 +14,7 @@ use gpui::{
 use gpui_component::{
     Disableable as _, Icon, IconName, Selectable as _, button::Button, h_flex, v_flex,
 };
-use openlogi_core::hid::{BacklightChange, BacklightState, BacklightStatus};
+use openlogi_core::hid::{BacklightChange, BacklightControls, BacklightState, BacklightStatus};
 
 use crate::state::{AppState, BacklightLoad, DeviceKey};
 use crate::ui::components::{PanelCard, Toggle, toggle_row};
@@ -91,35 +91,42 @@ fn backlight_rows(state: BacklightState, extended: bool, pal: Palette) -> impl I
     v_flex()
         .gap_4()
         .child(lit_row)
-        .when(state.controls.automatic, |rows| {
-            rows.child(toggle_row(
-                "automatic-brightness-row",
-                pal,
-                tr!("device.automatic_brightness"),
-                tr!("device.automatic_brightness_description"),
-                Toggle::new("automatic-brightness-toggle")
-                    .selected(state.is_automatic())
-                    .disabled(!state.enabled)
-                    .on_change(|on, _window, cx| commit(cx, BacklightChange::Automatic(*on))),
-            ))
-        })
-        .when(state.controls.level, |rows| {
+        .when(
+            state.controls.contains(BacklightControls::AUTOMATIC),
+            |rows| {
+                rows.child(toggle_row(
+                    "automatic-brightness-row",
+                    pal,
+                    tr!("device.automatic_brightness"),
+                    tr!("device.automatic_brightness_description"),
+                    Toggle::new("automatic-brightness-toggle")
+                        .selected(state.is_automatic())
+                        .disabled(!state.enabled)
+                        .on_change(|on, _window, cx| commit(cx, BacklightChange::Automatic(*on))),
+                ))
+            },
+        )
+        .when(state.controls.contains(BacklightControls::LEVEL), |rows| {
             rows.child(level_row(state, pal))
         })
-        .when(state.controls.power_save, |rows| {
-            rows.child(toggle_row(
-                "battery-saving-row",
-                pal,
-                tr!("device.battery_saving"),
-                tr!("device.battery_saving_description"),
-                Toggle::new("battery-saving-toggle")
-                    .selected(state.power_save)
-                    .on_change(|on, _window, cx| commit(cx, BacklightChange::PowerSave(*on))),
-            ))
-        })
-        .when(state.controls.duration, |rows| {
-            rows.child(duration_row(state, extended, pal))
-        })
+        .when(
+            state.controls.contains(BacklightControls::POWER_SAVE),
+            |rows| {
+                rows.child(toggle_row(
+                    "battery-saving-row",
+                    pal,
+                    tr!("device.battery_saving"),
+                    tr!("device.battery_saving_description"),
+                    Toggle::new("battery-saving-toggle")
+                        .selected(state.power_save)
+                        .on_change(|on, _window, cx| commit(cx, BacklightChange::PowerSave(*on))),
+                ))
+            },
+        )
+        .when(
+            state.controls.contains(BacklightControls::DURATION),
+            |rows| rows.child(duration_row(state, extended, pal)),
+        )
 }
 
 /// Why the keys are dark when the firmware, not the user, turned them off;
@@ -164,14 +171,17 @@ fn level_row(state: BacklightState, pal: Palette) -> impl IntoElement {
                         })
                 })),
         )
-        .when(state.controls.automatic, |row| {
-            row.child(
-                div()
-                    .text_caption()
-                    .text_color(pal.text_muted)
-                    .child(tr!("device.backlight_level_leaves_automatic")),
-            )
-        })
+        .when(
+            state.controls.contains(BacklightControls::AUTOMATIC),
+            |row| {
+                row.child(
+                    div()
+                        .text_caption()
+                        .text_color(pal.text_muted)
+                        .child(tr!("device.backlight_level_leaves_automatic")),
+                )
+            },
+        )
 }
 
 /// The timer, 5 through 30 seconds unless extended durations are on, then
@@ -334,12 +344,12 @@ mod tests {
         rust_i18n::set_locale("fi");
         let cx = draw(
             cx,
-            reading(BacklightControls {
-                automatic: true,
-                level: true,
-                power_save: true,
-                duration: true,
-            }),
+            reading(
+                BacklightControls::AUTOMATIC
+                    | BacklightControls::LEVEL
+                    | BacklightControls::POWER_SAVE
+                    | BacklightControls::DURATION,
+            ),
         );
 
         for row in ROWS {
@@ -410,10 +420,7 @@ mod tests {
     fn an_unoffered_duration_is_named_instead_of_being_hidden() {
         let _locale = LOCALE_LOCK.lock().unwrap();
         rust_i18n::set_locale("en");
-        let offered = reading(BacklightControls {
-            duration: true,
-            ..BacklightControls::default()
-        });
+        let offered = reading(BacklightControls::DURATION);
         assert_eq!(
             duration_caption(offered, false),
             tr!("device.backlight_duration_description")

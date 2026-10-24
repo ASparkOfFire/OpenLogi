@@ -83,13 +83,21 @@ fn status_from_firmware(status: FirmwareStatus) -> BacklightStatus {
 /// the runtime feature version and the level count.
 fn controls_from(options: BacklightOptions, version: u8, nb_levels: u8) -> BacklightControls {
     let manual = options.contains(BacklightOptions::PERM_MANUAL_SUPPORTED);
-    BacklightControls {
-        // A switch between the sensor and a held level needs both.
-        automatic: manual && options.contains(BacklightOptions::AUTO_MODE_SUPPORTED),
-        level: manual && version >= LEVEL_VERSION && nb_levels > 1,
-        power_save: options.contains(BacklightOptions::PWR_SAVE_SUPPORTED),
-        duration: version >= DURATION_VERSION,
+    let mut controls = BacklightControls::EMPTY;
+    // A switch between the sensor and a held level needs both.
+    if manual && options.contains(BacklightOptions::AUTO_MODE_SUPPORTED) {
+        controls |= BacklightControls::AUTOMATIC;
     }
+    if manual && version >= LEVEL_VERSION && nb_levels > 1 {
+        controls |= BacklightControls::LEVEL;
+    }
+    if options.contains(BacklightOptions::PWR_SAVE_SUPPORTED) {
+        controls |= BacklightControls::POWER_SAVE;
+    }
+    if version >= DURATION_VERSION {
+        controls |= BacklightControls::DURATION;
+    }
+    controls
 }
 
 /// Read `getBacklightConfig` + `getBacklightInfo`.
@@ -140,7 +148,9 @@ fn held_level(
 ) -> Option<u8> {
     match change {
         BacklightChange::Level(level) => Some(level),
-        BacklightChange::Automatic(false) if controls.level => Some(info.current_level),
+        BacklightChange::Automatic(false) if controls.contains(BacklightControls::LEVEL) => {
+            Some(info.current_level)
+        }
         _ => None,
     }
 }
@@ -567,7 +577,7 @@ mod tests {
         let state = state?;
         assert_eq!(writes, vec![written(1, PERMANENT, 2)]);
         assert_eq!(state.mode, BacklightMode::PermanentManual);
-        assert!(state.controls.level);
+        assert!(state.controls.contains(BacklightControls::LEVEL));
         Ok(())
     }
 
@@ -640,7 +650,7 @@ mod tests {
         let state = state?;
         assert_eq!(state.duration_secs, 15);
         assert_eq!(state.mode, BacklightMode::Automatic);
-        assert!(state.controls.duration);
+        assert!(state.controls.contains(BacklightControls::DURATION));
         // 15 seconds is 3 units. Powered stays 3; the fourth duration stays
         // 0x0405. Both inactivity fades become 3.
         assert_eq!(
@@ -698,10 +708,13 @@ mod tests {
     #[test]
     fn a_level_needs_a_held_level_version_3_and_a_choice() {
         let manual = BacklightOptions::PERM_MANUAL_SUPPORTED;
-        assert!(controls_from(manual, 3, 2).level);
-        assert!(!controls_from(manual, 2, 8).level);
-        assert!(!controls_from(manual, 3, 1).level);
-        assert!(!controls_from(BacklightOptions::AUTO_MODE_SUPPORTED, 3, 8).level);
+        assert!(controls_from(manual, 3, 2).contains(BacklightControls::LEVEL));
+        assert!(!controls_from(manual, 2, 8).contains(BacklightControls::LEVEL));
+        assert!(!controls_from(manual, 3, 1).contains(BacklightControls::LEVEL));
+        assert!(
+            !controls_from(BacklightOptions::AUTO_MODE_SUPPORTED, 3, 8)
+                .contains(BacklightControls::LEVEL)
+        );
         let all = controls_from(
             BacklightOptions::AUTO_MODE_SUPPORTED
                 | BacklightOptions::PERM_MANUAL_SUPPORTED
@@ -711,29 +724,29 @@ mod tests {
         );
         assert_eq!(
             all,
-            BacklightControls {
-                automatic: true,
-                level: true,
-                power_save: true,
-                duration: true,
-            }
+            BacklightControls::AUTOMATIC
+                | BacklightControls::LEVEL
+                | BacklightControls::POWER_SAVE
+                | BacklightControls::DURATION
         );
-        assert!(controls_from(BacklightOptions::empty(), 3, 1).duration);
+        assert!(
+            controls_from(BacklightOptions::empty(), 3, 1).contains(BacklightControls::DURATION)
+        );
         // The automatic switch needs both the sensor and a held level.
-        assert!(!controls_from(BacklightOptions::AUTO_MODE_SUPPORTED, 3, 8).automatic);
-        assert!(!controls_from(manual, 3, 8).automatic);
+        assert!(
+            !controls_from(BacklightOptions::AUTO_MODE_SUPPORTED, 3, 8)
+                .contains(BacklightControls::AUTOMATIC)
+        );
+        assert!(!controls_from(manual, 3, 8).contains(BacklightControls::AUTOMATIC));
         // A version-3 keyboard offers the timer even with no other options.
         // Before that version it offers nothing.
         assert_eq!(
             controls_from(BacklightOptions::empty(), 3, 8),
-            BacklightControls {
-                duration: true,
-                ..BacklightControls::default()
-            }
+            BacklightControls::DURATION
         );
         assert_eq!(
             controls_from(BacklightOptions::empty(), 2, 8),
-            BacklightControls::default()
+            BacklightControls::EMPTY
         );
     }
 

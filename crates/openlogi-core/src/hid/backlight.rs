@@ -94,50 +94,108 @@ pub struct BacklightState {
 }
 
 /// What software may change on a keyboard backlight beyond turning it on or
-/// off, from the `0x1982` capability bits and feature version.
+/// off, derived from the `0x1982` capability bits and feature version.
 ///
-/// Crosses the agent↔GUI IPC inside [`BacklightState`], so field order is
+/// A bit set: the offers are independent — the `0x1982` layout reports some
+/// without others, and a named-field struct of bools is exactly the shape
+/// `clippy::struct_excessive_bools` hears as an untyped state machine.
+/// Crosses the agent↔GUI IPC inside [`BacklightState`], so the bit layout is
 /// wire format — changes require a `PROTOCOL_VERSION` bump (guarded by
 /// `openlogi-ipc/tests/wire_format.rs`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent offers from 0x1982, not a state machine; bools keep the IPC shape explicit"
-)]
-pub struct BacklightControls {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BacklightControls(u8);
+
+impl BacklightControls {
+    /// No change beyond turning the backlight on or off.
+    pub const EMPTY: Self = Self(0);
     /// Software can switch between the ambient-light sensor choosing the
     /// level and holding one (permanent-manual mode): the keyboard supports
     /// both.
-    pub automatic: bool,
+    pub const AUTOMATIC: Self = Self(1 << 0);
     /// Software can pick the level: permanent-manual mode, `0x1982` version 3
     /// or later, and more than one level.
-    pub level: bool,
+    pub const LEVEL: Self = Self(1 << 1);
     /// The firmware can turn the backlight off on a low battery.
-    pub power_save: bool,
+    pub const POWER_SAVE: Self = Self(1 << 2);
     /// Software can set how long the keys stay lit after typing stops:
     /// `0x1982` version 3 or later, which is the layout those durations are
     /// written in.
-    ///
-    /// `serde(default)` only keeps recorded JSON fixtures that predate the
-    /// field loading; the IPC encoding always carries it.
-    #[serde(default)]
-    pub duration: bool,
-}
+    pub const DURATION: Self = Self(1 << 3);
 
-impl BacklightControls {
+    /// Construct a set without discarding any bit.
+    #[must_use]
+    pub const fn from_bits_retain(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    /// Return the raw set bits.
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Whether every bit in `other` is offered here.
+    #[must_use]
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Whether nothing beyond turning the backlight on or off is offered.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
     /// Whether `change` is one this keyboard accepts, ignoring the level
     /// range and the duration range: [`BacklightChange::Level`] also needs a
     /// level below [`BacklightState::nb_levels`], and
     /// [`BacklightChange::Duration`] a multiple of five seconds up to two hours.
     #[must_use]
-    pub fn allow(self, change: BacklightChange) -> bool {
+    pub const fn allow(self, change: BacklightChange) -> bool {
         match change {
             BacklightChange::Enabled(_) => true,
-            BacklightChange::Automatic(_) => self.automatic,
-            BacklightChange::Level(_) => self.level,
-            BacklightChange::PowerSave(_) => self.power_save,
-            BacklightChange::Duration(_) => self.duration,
+            BacklightChange::Automatic(_) => self.contains(Self::AUTOMATIC),
+            BacklightChange::Level(_) => self.contains(Self::LEVEL),
+            BacklightChange::PowerSave(_) => self.contains(Self::POWER_SAVE),
+            BacklightChange::Duration(_) => self.contains(Self::DURATION),
         }
+    }
+}
+
+impl std::ops::BitOr for BacklightControls {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for BacklightControls {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl std::ops::BitAnd for BacklightControls {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl std::ops::BitAndAssign for BacklightControls {
+    fn bitand_assign(&mut self, rhs: Self) {
+        self.0 &= rhs.0;
+    }
+}
+
+impl std::ops::Not for BacklightControls {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        Self(!self.0)
     }
 }
 
@@ -351,12 +409,10 @@ mod tests {
             nb_levels: 8,
             power_save: true,
             duration_secs: 30,
-            controls: BacklightControls {
-                automatic: true,
-                level: true,
-                power_save: true,
-                duration: true,
-            },
+            controls: BacklightControls::AUTOMATIC
+                | BacklightControls::LEVEL
+                | BacklightControls::POWER_SAVE
+                | BacklightControls::DURATION,
         }
     }
 

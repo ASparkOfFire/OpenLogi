@@ -161,7 +161,7 @@ fn print_state(label: &str, state: BacklightState) {
 
 /// The timer this keyboard reports, or that it does not offer one.
 fn duration_label(state: BacklightState) -> String {
-    if state.controls.duration {
+    if state.controls.contains(BacklightControls::DURATION) {
         format!("{}s", state.duration_secs)
     } else {
         "unsupported".to_string()
@@ -171,13 +171,13 @@ fn duration_label(state: BacklightState) -> String {
 /// The subcommands beyond `on` / `off` this keyboard accepts.
 fn offers(controls: BacklightControls) -> String {
     let offered: Vec<&str> = [
-        (controls.automatic, "auto"),
-        (controls.level, "level"),
-        (controls.power_save, "battery-saving"),
-        (controls.duration, "duration"),
+        (BacklightControls::AUTOMATIC, "auto"),
+        (BacklightControls::LEVEL, "level"),
+        (BacklightControls::POWER_SAVE, "battery-saving"),
+        (BacklightControls::DURATION, "duration"),
     ]
     .into_iter()
-    .filter_map(|(offered, name)| offered.then_some(name))
+    .filter_map(|(offer, name)| controls.contains(offer).then_some(name))
     .collect();
     if offered.is_empty() {
         "on/off only".to_string()
@@ -238,18 +238,16 @@ mod tests {
     #[test]
     fn status_lists_only_what_the_keyboard_offers() {
         assert_eq!(offers(BacklightControls::default()), "on/off only");
-        let level_only = BacklightControls {
-            level: true,
-            ..BacklightControls::default()
-        };
-        assert_eq!(offers(level_only), "on/off, level");
-        let all = BacklightControls {
-            automatic: true,
-            level: true,
-            power_save: true,
-            duration: true,
-        };
-        assert_eq!(offers(all), "on/off, auto, level, battery-saving, duration");
+        assert_eq!(offers(BacklightControls::LEVEL), "on/off, level");
+        assert_eq!(
+            offers(
+                BacklightControls::AUTOMATIC
+                    | BacklightControls::LEVEL
+                    | BacklightControls::POWER_SAVE
+                    | BacklightControls::DURATION
+            ),
+            "on/off, auto, level, battery-saving, duration"
+        );
     }
 
     #[test]

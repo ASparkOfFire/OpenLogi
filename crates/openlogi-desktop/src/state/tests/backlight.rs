@@ -22,12 +22,10 @@ fn lit() -> BacklightState {
         nb_levels: 5,
         power_save: true,
         duration_secs: 30,
-        controls: BacklightControls {
-            automatic: true,
-            level: true,
-            power_save: true,
-            duration: true,
-        },
+        controls: BacklightControls::AUTOMATIC
+            | BacklightControls::LEVEL
+            | BacklightControls::POWER_SAVE
+            | BacklightControls::DURATION,
     }
 }
 
@@ -195,10 +193,7 @@ fn a_change_targets_a_reading_that_accepts_it_and_is_altered_by_it() {
     assert_eq!(change_target(&reading, BacklightChange::Duration(7)), None);
     // A control this keyboard does not offer.
     let no_level = Load::Ready(Arc::new(BacklightState {
-        controls: BacklightControls {
-            level: false,
-            ..lit().controls
-        },
+        controls: lit().controls & !BacklightControls::LEVEL,
         ..lit()
     }));
     assert_eq!(change_target(&no_level, BacklightChange::Level(1)), None);
@@ -251,10 +246,7 @@ fn a_change_shows_at_once_and_writes_the_keyboard_without_touching_the_config(
 fn a_change_the_reading_does_not_accept_writes_nothing(cx: &mut gpui::TestAppContext) {
     let (state, mut receiver) = keyboard_state(true);
     let reading = BacklightState {
-        controls: BacklightControls {
-            automatic: false,
-            ..lit().controls
-        },
+        controls: lit().controls & !BacklightControls::AUTOMATIC,
         ..lit()
     };
     let (_key, _route) = installed_and_read(cx, &mut receiver, state, reading);
