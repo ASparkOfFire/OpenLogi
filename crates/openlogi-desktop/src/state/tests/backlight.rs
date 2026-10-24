@@ -8,11 +8,18 @@ use crate::state::BacklightLoad;
 use crate::state::backlight::change_target;
 use crate::state::events::StateEvents;
 use openlogi_core::hid::{
-    BacklightChange, BacklightControls, BacklightMode, BacklightState, BacklightStatus, DeviceRoute,
+    BacklightChange, BacklightControls, BacklightDuration, BacklightMode, BacklightState,
+    BacklightStatus, DeviceRoute,
 };
 
 /// A keyboard lit at level 2 of 0–4 by its light sensor, offering every
 /// control.
+/// A test duration; the type guarantees every constructed value is legal.
+fn duration(seconds: u16) -> BacklightDuration {
+    BacklightDuration::try_from(seconds).expect("a listed step is a valid duration")
+}
+
+/// The fixture keyboard's lights-on state, worked through one control.
 fn lit() -> BacklightState {
     BacklightState {
         enabled: true,
@@ -21,7 +28,7 @@ fn lit() -> BacklightState {
         current_level: 2,
         nb_levels: 5,
         power_save: true,
-        duration_secs: 30,
+        duration_secs: Some(duration(30)),
         controls: BacklightControls::AUTOMATIC
             | BacklightControls::LEVEL
             | BacklightControls::POWER_SAVE
@@ -184,13 +191,14 @@ fn a_change_targets_a_reading_that_accepts_it_and_is_altered_by_it() {
     // A level the keyboard does not have.
     assert_eq!(change_target(&reading, BacklightChange::Level(5)), None);
     // Already on the 30 second step: nothing to write. A shorter step is.
-    assert_eq!(change_target(&reading, BacklightChange::Duration(30)), None);
     assert_eq!(
-        change_target(&reading, BacklightChange::Duration(15)),
-        Some(lit().changed(BacklightChange::Duration(15)))
+        change_target(&reading, BacklightChange::Duration(duration(30))),
+        None
     );
-    // Not one of the 5–30 second steps.
-    assert_eq!(change_target(&reading, BacklightChange::Duration(7)), None);
+    assert_eq!(
+        change_target(&reading, BacklightChange::Duration(duration(15))),
+        Some(lit().changed(BacklightChange::Duration(duration(15))))
+    );
     // A control this keyboard does not offer.
     let no_level = Load::Ready(Arc::new(BacklightState {
         controls: lit().controls & !BacklightControls::LEVEL,

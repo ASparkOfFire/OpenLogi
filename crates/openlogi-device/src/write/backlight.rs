@@ -16,7 +16,8 @@ use tracing::debug;
 use crate::SharedChannel;
 use crate::backend::HidBackend;
 use crate::backlight::{
-    BacklightChange, BacklightControls, BacklightMode, BacklightState, BacklightStatus,
+    BacklightChange, BacklightControls, BacklightDuration, BacklightMode, BacklightState,
+    BacklightStatus,
 };
 use crate::channel::route::DeviceRoute;
 
@@ -127,9 +128,9 @@ fn state_from(config: &BacklightConfig, info: &BacklightInfo, version: u8) -> Ba
         // duration version the bytes are preserved on other writes but not
         // reported as a timer software set.
         duration_secs: if version >= DURATION_VERSION {
-            BacklightChange::seconds_from_units(config.duration_hands_out)
+            BacklightDuration::from_units(config.duration_hands_out)
         } else {
-            0
+            None
         },
     }
 }
@@ -197,11 +198,10 @@ fn request_for(
         // One Options+ timer covers both inactivity fades. MX Keys keeps them
         // equal and leaves the plugged-in timeout (`duration_powered`) and the
         // unverified fourth duration alone.
-        BacklightChange::Duration(seconds) => {
-            if let Some(units) = BacklightChange::duration_units(seconds) {
-                request.duration_hands_out = units;
-                request.duration_hands_in = units;
-            }
+        BacklightChange::Duration(duration) => {
+            let units = duration.units();
+            request.duration_hands_out = units;
+            request.duration_hands_in = units;
         }
     }
     request
@@ -224,10 +224,9 @@ fn carries(config: &BacklightConfig, change: BacklightChange, held: Option<u8>) 
                 && held.is_none_or(|level| config.current_level == level)
         }
         BacklightChange::PowerSave(on) => config.options.contains(BacklightOptions::PWR_SAVE) == on,
-        BacklightChange::Duration(seconds) => {
-            BacklightChange::duration_units(seconds).is_some_and(|units| {
-                config.duration_hands_out == units && config.duration_hands_in == units
-            })
+        BacklightChange::Duration(duration) => {
+            let units = duration.units();
+            config.duration_hands_out == units && config.duration_hands_in == units
         }
     }
 }
@@ -644,11 +643,16 @@ mod tests {
         Ok(())
     }
 
+    /// A test duration; the type guarantees every constructed value is legal.
+    fn duration(seconds: u16) -> BacklightDuration {
+        BacklightDuration::try_from(seconds).expect("a listed step is a valid duration")
+    }
+
     #[tokio::test]
     async fn a_duration_sets_both_inactivity_fades_and_keeps_the_rest() -> Result<(), WriteError> {
-        let (state, writes) = update(Keyboard::v3(), BacklightChange::Duration(15)).await;
+        let (state, writes) = update(Keyboard::v3(), BacklightChange::Duration(duration(15))).await;
         let state = state?;
-        assert_eq!(state.duration_secs, 15);
+        assert_eq!(state.duration_secs, Some(duration(15)));
         assert_eq!(state.mode, BacklightMode::Automatic);
         assert!(state.controls.contains(BacklightControls::DURATION));
         // 15 seconds is 3 units. Powered stays 3; the fourth duration stays
@@ -674,9 +678,9 @@ mod tests {
         let no_sensor = Keyboard::v3().capabilities(BacklightOptions::PERM_MANUAL_SUPPORTED);
         for (keyboard, change) in [
             (before_v3, BacklightChange::Level(2)),
-            (before_v3, BacklightChange::Duration(15)),
+            (before_v3, BacklightChange::Duration(duration(15))),
             (Keyboard::v3(), BacklightChange::Level(NB_LEVELS)),
-            (Keyboard::v3(), BacklightChange::Duration(7)),
+            (no_saving, BacklightChange::PowerSave(true)),
             (no_saving, BacklightChange::PowerSave(true)),
             (no_sensor, BacklightChange::Automatic(true)),
         ] {

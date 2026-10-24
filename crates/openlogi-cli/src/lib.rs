@@ -110,7 +110,9 @@ mod tests {
             Command::Backlight(args) => {
                 assert!(matches!(
                     args.action,
-                    Some(BacklightAction::Duration { seconds: 15 })
+                    Some(BacklightAction::Duration {
+                        duration: seconds
+                    }) if seconds.seconds() == 15
                 ));
             }
             other => panic!("expected Backlight, got {other:?}"),
@@ -124,7 +126,9 @@ mod tests {
             Command::Backlight(args) => {
                 assert!(matches!(
                     args.action,
-                    Some(BacklightAction::Duration { seconds: 7_200 })
+                    Some(BacklightAction::Duration {
+                        duration: seconds
+                    }) if seconds.seconds() == 7_200
                 ));
             }
             other => panic!("expected Backlight, got {other:?}"),

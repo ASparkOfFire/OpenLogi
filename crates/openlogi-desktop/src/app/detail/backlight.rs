@@ -14,7 +14,9 @@ use gpui::{
 use gpui_component::{
     Disableable as _, Icon, IconName, Selectable as _, button::Button, h_flex, v_flex,
 };
-use openlogi_core::hid::{BacklightChange, BacklightControls, BacklightState, BacklightStatus};
+use openlogi_core::hid::{
+    BacklightChange, BacklightControls, BacklightDuration, BacklightState, BacklightStatus,
+};
 
 use crate::state::{AppState, BacklightLoad, DeviceKey};
 use crate::ui::components::{PanelCard, Toggle, toggle_row};
@@ -197,15 +199,9 @@ fn duration_row(state: BacklightState, extended: bool, pal: Palette) -> impl Int
                 .text_color(pal.text_primary)
                 .child(tr!("device.backlight_duration")),
         )
-        .child(duration_pills(
-            state,
-            &BacklightChange::SHORT_DURATION_SECONDS,
-        ))
+        .child(duration_pills(state, &SHORT_DURATION_SECONDS))
         .when(extended, |row| {
-            row.child(duration_pills(
-                state,
-                &BacklightChange::EXTENDED_DURATION_SECONDS,
-            ))
+            row.child(duration_pills(state, &EXTENDED_DURATION_SECONDS))
         })
         .child(
             div()
@@ -231,13 +227,15 @@ fn duration_pills(state: BacklightState, steps: &[u16]) -> impl IntoElement {
         .gap_2()
         .flex_wrap()
         .children(steps.iter().copied().map(|seconds| {
+            let duration = BacklightDuration::try_from(seconds)
+                .expect("the panel only offers steps the keyboard can store");
             Button::new(("backlight-duration", usize::from(seconds)))
                 .compact()
                 .label(duration_label(seconds))
-                .selected(seconds == state.duration_secs)
+                .selected(Some(duration) == state.duration_secs)
                 .disabled(!state.enabled)
                 .on_click(move |_event, _window, cx| {
-                    commit(cx, BacklightChange::Duration(seconds));
+                    commit(cx, BacklightChange::Duration(duration));
                 })
         }))
 }
@@ -264,11 +262,38 @@ fn duration_label(seconds: u16) -> gpui::SharedString {
 /// The usual explanation, or the seconds the keyboard actually stored when
 /// they are not one of the steps this row is showing.
 fn duration_caption(state: BacklightState, extended: bool) -> gpui::SharedString {
-    if state.duration_secs > 0 && !BacklightChange::duration_step(state.duration_secs, extended) {
-        tr!("device.backlight_duration_other", seconds => state.duration_secs)
-    } else {
-        tr!("device.backlight_duration_description")
+    match state.duration_secs {
+        Some(timer) if !duration_step(timer.seconds(), extended) => tr!(
+            "device.backlight_duration_other",
+            seconds => timer.seconds()
+        ),
+        _ => tr!("device.backlight_duration_description"),
     }
+}
+
+/// The timer steps the Device tab shows without the extended switch: the
+/// short timers Logi Options+ offers by default.
+const SHORT_DURATION_SECONDS: [u16; 6] = [5, 10, 15, 20, 25, 30];
+
+/// Longer timers, up to the two hours `0x1982` stores. Hidden until the
+/// panel's extended-duration switch is on.
+const EXTENDED_DURATION_SECONDS: [u16; 7] = [60, 120, 300, 600, 1_800, 3_600, 7_200];
+
+/// Whether `seconds` is one of the steps this row is showing.
+const fn duration_step(seconds: u16, extended: bool) -> bool {
+    listed(seconds, &SHORT_DURATION_SECONDS)
+        || (extended && listed(seconds, &EXTENDED_DURATION_SECONDS))
+}
+
+const fn listed(seconds: u16, steps: &[u16]) -> bool {
+    let mut index = 0;
+    while index < steps.len() {
+        if steps[index] == seconds {
+            return true;
+        }
+        index += 1;
+    }
+    false
 }
 
 fn commit(cx: &mut App, change: BacklightChange) {
@@ -283,7 +308,14 @@ mod tests {
         Context, IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window, div,
         px, size,
     };
-    use openlogi_core::hid::{BacklightControls, BacklightMode, BacklightState, BacklightStatus};
+    use openlogi_core::hid::{
+        BacklightControls, BacklightDuration, BacklightMode, BacklightState, BacklightStatus,
+    };
+
+    /// A test duration; the type guarantees every constructed value is legal.
+    fn duration(seconds: u16) -> BacklightDuration {
+        BacklightDuration::try_from(seconds).expect("a listed step is a valid duration")
+    }
 
     use super::{BacklightFacts, backlight_card, duration_caption, lit_caption};
     use crate::services::i18n::LOCALE_LOCK;
@@ -307,7 +339,7 @@ mod tests {
             current_level: 2,
             nb_levels: 5,
             power_save: true,
-            duration_secs: 30,
+            duration_secs: Some(duration(30)),
             controls,
         }
     }
@@ -321,7 +353,10 @@ mod tests {
                 key: DeviceKey::from("direct:046d:b35b:unit:a393cae0"),
                 load: Load::Ready(Arc::new(self.0)),
                 reachable: true,
-                extended: self.0.duration_secs > 30,
+                extended: self
+                    .0
+                    .duration_secs
+                    .is_some_and(|timer| timer.seconds() > 30),
             };
             div()
                 .w(px(360.))
@@ -426,7 +461,7 @@ mod tests {
             tr!("device.backlight_duration_description")
         );
         let longer = BacklightState {
-            duration_secs: 55,
+            duration_secs: Some(duration(55)),
             ..offered
         };
         assert_eq!(
@@ -435,7 +470,7 @@ mod tests {
         );
         // A two-hour timer is one of the extended steps, so it needs no aside.
         let max = BacklightState {
-            duration_secs: 7_200,
+            duration_secs: Some(duration(7_200)),
             ..offered
         };
         assert_eq!(

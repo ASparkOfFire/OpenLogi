@@ -8,7 +8,8 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use openlogi_core::hid::backlight::max_backlight_level;
 use openlogi_hid::{
-    BacklightChange, BacklightControls, BacklightMode, BacklightState, BacklightStatus, DeviceRoute,
+    BacklightChange, BacklightControls, BacklightDuration, BacklightMode, BacklightState,
+    BacklightStatus, DeviceRoute,
 };
 
 use crate::cmd::api::Switch;
@@ -65,27 +66,26 @@ pub enum BacklightAction {
     Duration {
         /// Seconds, a multiple of 5 from 5 through 7200.
         #[arg(value_name = "SECONDS", value_parser = duration_seconds)]
-        seconds: u16,
+        duration: BacklightDuration,
     },
 }
 
-/// Reject a duration that is not one of the Options+ steps, so a typo never
-/// reaches the keyboard as an unsupported change.
-fn duration_seconds(raw: &str) -> Result<u16, String> {
-    let seconds = raw.parse::<u16>().map_err(|_| duration_rejected())?;
-    if BacklightChange::duration_offered(seconds) {
-        Ok(seconds)
-    } else {
-        Err(duration_rejected())
-    }
+/// Reject a duration that is not one the keyboard can store, so a typo never
+/// reaches the write layer — the validated type makes it unrepresentable
+/// before `update_backlight` is even called.
+fn duration_seconds(raw: &str) -> Result<BacklightDuration, String> {
+    raw.parse::<u16>()
+        .ok()
+        .and_then(|seconds| BacklightDuration::try_from(seconds).ok())
+        .ok_or_else(duration_rejected)
 }
 
 fn duration_rejected() -> String {
     format!(
         "duration must be a multiple of {} seconds, from {} through {} (two hours)",
-        BacklightChange::DURATION_STEP_SECONDS,
-        BacklightChange::DURATION_STEP_SECONDS,
-        BacklightChange::MAX_DURATION_SECONDS,
+        BacklightDuration::UNIT_SECONDS,
+        BacklightDuration::UNIT_SECONDS,
+        BacklightDuration::MAX_SECONDS,
     )
 }
 
@@ -99,7 +99,7 @@ impl BacklightAction {
             Self::Auto { set } => Some(BacklightChange::Automatic(set.is_on())),
             Self::Level { level } => Some(BacklightChange::Level(level)),
             Self::BatterySaving { set } => Some(BacklightChange::PowerSave(set.is_on())),
-            Self::Duration { seconds } => Some(BacklightChange::Duration(seconds)),
+            Self::Duration { duration } => Some(BacklightChange::Duration(duration)),
         }
     }
 }
@@ -161,10 +161,9 @@ fn print_state(label: &str, state: BacklightState) {
 
 /// The timer this keyboard reports, or that it does not offer one.
 fn duration_label(state: BacklightState) -> String {
-    if state.controls.contains(BacklightControls::DURATION) {
-        format!("{}s", state.duration_secs)
-    } else {
-        "unsupported".to_string()
+    match state.duration_secs {
+        Some(timer) => format!("{}s", timer.seconds()),
+        None => "unsupported".to_string(),
     }
 }
 
@@ -210,6 +209,27 @@ fn status_label(status: BacklightStatus) -> &'static str {
 mod tests {
     use super::*;
 
+    /// A test duration; the type guarantees every constructed value is legal.
+    fn duration(seconds: u16) -> BacklightDuration {
+        BacklightDuration::try_from(seconds).expect("a listed step is a valid duration")
+    }
+
+    #[test]
+    fn the_parser_takes_only_what_the_keyboard_can_store() {
+        assert_eq!(
+            duration_seconds("15"),
+            Ok(duration(15)),
+            "the short step the panel shows"
+        );
+        assert_eq!(duration_seconds("7200"), Ok(duration(7_200)));
+        assert_eq!(
+            duration_seconds("7"),
+            Err(duration_rejected()),
+            "a value between the 5-second steps"
+        );
+        assert_eq!(duration_seconds("zero"), Err(duration_rejected()));
+    }
+
     #[test]
     fn each_action_writes_its_own_change() {
         assert_eq!(BacklightAction::Status.change(), None);
@@ -230,8 +250,11 @@ mod tests {
             Some(BacklightChange::PowerSave(true))
         );
         assert_eq!(
-            BacklightAction::Duration { seconds: 15 }.change(),
-            Some(BacklightChange::Duration(15))
+            BacklightAction::Duration {
+                duration: duration(15)
+            }
+            .change(),
+            Some(BacklightChange::Duration(duration(15)))
         );
     }
 
@@ -254,7 +277,7 @@ mod tests {
     fn only_a_change_that_keeps_the_mode_warns_about_the_backlight_keys() {
         assert!(keeps_the_mode(BacklightChange::Enabled(true)));
         assert!(keeps_the_mode(BacklightChange::PowerSave(false)));
-        assert!(keeps_the_mode(BacklightChange::Duration(10)));
+        assert!(keeps_the_mode(BacklightChange::Duration(duration(10))));
         assert!(!keeps_the_mode(BacklightChange::Automatic(false)));
         assert!(!keeps_the_mode(BacklightChange::Level(2)));
     }

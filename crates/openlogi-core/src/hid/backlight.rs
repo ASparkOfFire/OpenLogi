@@ -6,7 +6,9 @@
 
 use std::fmt;
 
+use nutype::nutype;
 use serde::{Deserialize, Serialize};
+use thiserror::Error as ThisError;
 
 /// How the firmware decides the backlight brightness level.
 ///
@@ -79,18 +81,18 @@ pub struct BacklightState {
     /// Which [`BacklightChange`]s the keyboard accepts.
     #[serde(default)]
     pub controls: BacklightControls,
-    /// How long the keys stay lit after typing stops, in seconds.
+    /// How long the keys stay lit after typing stops.
     ///
     /// From the keyboard's hands-out fade-out, which Logi Options+ shows as
-    /// the backlight timer. `0` when the keyboard does not offer a duration or
-    /// reports none. A value outside the steps the panel is showing is still
-    /// reported as stored — a longer timer stays visible instead of being
-    /// snapped to 30 seconds.
+    /// the backlight timer. `None` when the keyboard does not offer a
+    /// duration or reports none. A value outside the steps the panel is
+    /// showing is still reported as stored — a longer timer stays visible
+    /// instead of being snapped to 30 seconds.
     ///
     /// `serde(default)` only keeps recorded JSON fixtures that predate the
     /// field loading; the IPC encoding always carries it.
     #[serde(default)]
-    pub duration_secs: u16,
+    pub duration_secs: Option<BacklightDuration>,
 }
 
 /// What software may change on a keyboard backlight beyond turning it on or
@@ -199,6 +201,93 @@ impl std::ops::Not for BacklightControls {
     }
 }
 
+/// One keyboard fade-out the `0x1982` timer can store: a positive multiple
+/// of five seconds, at most two hours — one unit through `0x05a0`.
+///
+/// Validated rather than a bare `u16`, so no calling layer re-checks the
+/// 5-second rule and [`BacklightChange::Duration`] cannot carry a timer the
+/// write layer would have to reject. The wire and the TOML still carry plain
+/// seconds; serde goes through the same validation.
+#[nutype(
+    validate(with = validate_fade_out, error = BacklightDurationError),
+    derive(
+        Debug,
+        Clone,
+        Copy,
+        PartialEq,
+        Eq,
+        PartialOrd,
+        Ord,
+        TryFrom,
+        Into,
+        Serialize,
+        Deserialize
+    )
+)]
+pub struct BacklightDuration(u16);
+
+impl BacklightDuration {
+    /// Seconds in one HID++ `0x1982` fade-out unit.
+    pub const UNIT_SECONDS: u16 = 5;
+
+    /// Longest fade-out `0x1982` stores, in units.
+    pub const MAX_UNITS: u16 = 0x05a0;
+
+    /// Longest fade-out `0x1982` stores: two hours.
+    pub const MAX_SECONDS: u16 = Self::MAX_UNITS * Self::UNIT_SECONDS;
+
+    /// The duration in seconds.
+    #[must_use]
+    pub fn seconds(self) -> u16 {
+        self.into_inner()
+    }
+
+    /// The duration in the feature's stored units, `1..=[Self::MAX_UNITS]`.
+    #[must_use]
+    pub fn units(self) -> u16 {
+        self.into_inner() / Self::UNIT_SECONDS
+    }
+
+    /// The fade-out stored in `units`, or `None` when the device reported
+    /// none (`0`, what a keyboard without the timer writes) or a length
+    /// beyond the two hours this feature version stores.
+    #[must_use]
+    pub fn from_units(units: u16) -> Option<Self> {
+        Self::try_new(units.checked_mul(Self::UNIT_SECONDS)?).ok()
+    }
+}
+
+/// Why a value is not a [`BacklightDuration`].
+#[derive(Clone, Debug, PartialEq, Eq, ThisError)]
+pub enum BacklightDurationError {
+    /// No positive multiple of the 5-second unit: `0`.
+    #[error("the fade-out must be a positive multiple of five seconds, {0} was given")]
+    BelowOneUnit(u16),
+    /// A value between two 5-second steps.
+    #[error("the fade-out must be a multiple of five seconds, {0} was given")]
+    BetweenSteps(u16),
+    /// A fade-out longer than the two hours `0x1982` stores.
+    #[error("the fade-out cannot exceed two hours (7200 seconds), {0} was given")]
+    BeyondTwoHours(u16),
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "nutype hands the validator a reference to the inner value"
+)]
+fn validate_fade_out(seconds: &u16) -> Result<(), BacklightDurationError> {
+    let seconds = *seconds;
+    if seconds < BacklightDuration::UNIT_SECONDS {
+        Err(BacklightDurationError::BelowOneUnit(seconds))
+    } else if !seconds.is_multiple_of(BacklightDuration::UNIT_SECONDS) {
+        Err(BacklightDurationError::BetweenSteps(seconds))
+    } else if seconds > BacklightDuration::MAX_SECONDS {
+        Err(BacklightDurationError::BeyondTwoHours(seconds))
+    } else {
+        Ok(())
+    }
+}
+
 /// One change to a keyboard backlight, written to the keyboard's own memory.
 ///
 /// Crosses the agent↔GUI IPC, where serde encodes the variant *index*, so
@@ -216,75 +305,8 @@ pub enum BacklightChange {
     Level(u8),
     /// Turn battery saving on or off.
     PowerSave(bool),
-    /// Keep the keys lit for this many seconds after typing stops. A multiple
-    /// of [`Self::DURATION_STEP_SECONDS`] from that step through
-    /// [`Self::MAX_DURATION_SECONDS`] — one unit through `0x05a0`, the longest
-    /// fade-out `0x1982` stores.
-    Duration(u16),
-}
-
-impl BacklightChange {
-    /// Seconds in one HID++ `0x1982` fade-out unit. The feature stores
-    /// durations in these units (`1..=0x05a0`).
-    pub const DURATION_STEP_SECONDS: u16 = 5;
-
-    /// Longest fade-out `0x1982` stores, in 5-second units.
-    pub const MAX_DURATION_UNITS: u16 = 0x05a0;
-
-    /// Longest fade-out `0x1982` stores: two hours.
-    pub const MAX_DURATION_SECONDS: u16 = Self::MAX_DURATION_UNITS * Self::DURATION_STEP_SECONDS;
-
-    /// The short timer Logi Options+ shows by default, in seconds.
-    pub const SHORT_DURATION_SECONDS: [u16; 6] = [5, 10, 15, 20, 25, 30];
-
-    /// Longer timers, up to [`Self::MAX_DURATION_SECONDS`]. Hidden until the
-    /// panel's extended-duration switch is on.
-    pub const EXTENDED_DURATION_SECONDS: [u16; 7] = [60, 120, 300, 600, 1_800, 3_600, 7_200];
-
-    /// Whether `seconds` is a fade-out the protocol can store: a positive
-    /// multiple of [`Self::DURATION_STEP_SECONDS`], at most two hours.
-    #[must_use]
-    pub const fn duration_offered(seconds: u16) -> bool {
-        seconds >= Self::DURATION_STEP_SECONDS
-            && seconds <= Self::MAX_DURATION_SECONDS
-            && seconds.is_multiple_of(Self::DURATION_STEP_SECONDS)
-    }
-
-    /// Whether `seconds` is one of the steps `extended` is showing.
-    #[must_use]
-    pub const fn duration_step(seconds: u16, extended: bool) -> bool {
-        Self::listed(seconds, &Self::SHORT_DURATION_SECONDS)
-            || (extended && Self::listed(seconds, &Self::EXTENDED_DURATION_SECONDS))
-    }
-
-    const fn listed(seconds: u16, steps: &[u16]) -> bool {
-        let mut index = 0;
-        while index < steps.len() {
-            if steps[index] == seconds {
-                return true;
-            }
-            index += 1;
-        }
-        false
-    }
-
-    /// Fade-out units for a protocol duration, or `None` when `seconds` is not
-    /// one the feature can store.
-    #[must_use]
-    pub const fn duration_units(seconds: u16) -> Option<u16> {
-        if Self::duration_offered(seconds) {
-            Some(seconds / Self::DURATION_STEP_SECONDS)
-        } else {
-            None
-        }
-    }
-
-    /// Seconds a fade-out stored in [`Self::DURATION_STEP_SECONDS`] units
-    /// lasts. Saturates; the feature's own maximum (`0x05a0` units) fits.
-    #[must_use]
-    pub const fn seconds_from_units(units: u16) -> u16 {
-        units.saturating_mul(Self::DURATION_STEP_SECONDS)
-    }
+    /// Keep the keys lit this long after typing stops.
+    Duration(BacklightDuration),
 }
 
 impl fmt::Display for BacklightChange {
@@ -295,7 +317,7 @@ impl fmt::Display for BacklightChange {
             Self::Automatic(on) => write!(f, "automatic brightness {}", on_off(on)),
             Self::Level(level) => write!(f, "backlight level {level}"),
             Self::PowerSave(on) => write!(f, "battery saving {}", on_off(on)),
-            Self::Duration(seconds) => write!(f, "backlight duration {seconds}s"),
+            Self::Duration(seconds) => write!(f, "backlight duration {}s", seconds.seconds()),
         }
     }
 }
@@ -312,12 +334,11 @@ impl BacklightState {
     #[must_use]
     pub fn accepts(self, change: BacklightChange) -> bool {
         self.controls.allow(change)
+            // A duration is valid by construction; only a level needs an
+            // in-range check against this keyboard.
             && match change {
                 BacklightChange::Level(level) => level < self.nb_levels,
-                BacklightChange::Duration(seconds) => BacklightChange::duration_offered(seconds),
-                BacklightChange::Enabled(_)
-                | BacklightChange::Automatic(_)
-                | BacklightChange::PowerSave(_) => true,
+                _ => true,
             }
     }
 
@@ -369,7 +390,7 @@ impl BacklightState {
                 next.current_level = level;
             }
             BacklightChange::PowerSave(on) => next.power_save = on,
-            BacklightChange::Duration(seconds) => next.duration_secs = seconds,
+            BacklightChange::Duration(seconds) => next.duration_secs = Some(seconds),
         }
         next.status = if !next.enabled {
             BacklightStatus::DisabledBySoftware
@@ -400,6 +421,12 @@ mod tests {
         assert_eq!(max_backlight_level(0), 0);
     }
 
+    /// A test duration that is one of the panel steps; the type itself
+    /// guarantees legality.
+    fn duration(seconds: u16) -> BacklightDuration {
+        BacklightDuration::try_from(seconds).expect("a listed step is a valid duration")
+    }
+
     fn lit() -> BacklightState {
         BacklightState {
             enabled: true,
@@ -408,7 +435,7 @@ mod tests {
             current_level: 4,
             nb_levels: 8,
             power_save: true,
-            duration_secs: 30,
+            duration_secs: Some(duration(30)),
             controls: BacklightControls::AUTOMATIC
                 | BacklightControls::LEVEL
                 | BacklightControls::POWER_SAVE
@@ -427,7 +454,7 @@ mod tests {
             BacklightChange::Automatic(false),
             BacklightChange::Level(3),
             BacklightChange::PowerSave(false),
-            BacklightChange::Duration(15),
+            BacklightChange::Duration(duration(15)),
         ] {
             assert!(all.accepts(change), "{change}");
             assert!(!none.accepts(change), "{change}");
@@ -444,31 +471,41 @@ mod tests {
     }
 
     #[test]
-    fn a_duration_must_be_a_protocol_step_through_two_hours() {
-        for seconds in BacklightChange::SHORT_DURATION_SECONDS
-            .into_iter()
-            .chain(BacklightChange::EXTENDED_DURATION_SECONDS)
-        {
-            assert!(
-                lit().accepts(BacklightChange::Duration(seconds)),
-                "{seconds}"
-            );
-            assert!(BacklightChange::duration_step(seconds, seconds > 30));
-            assert_eq!(BacklightChange::duration_units(seconds), Some(seconds / 5));
-        }
-        assert!(!lit().accepts(BacklightChange::Duration(0)));
-        assert!(!lit().accepts(BacklightChange::Duration(7)));
+    fn a_duration_is_validated_at_construction_not_at_use() {
         // 35 seconds is a legal fade-out, just not a short step.
-        assert!(lit().accepts(BacklightChange::Duration(35)));
-        assert!(!BacklightChange::duration_step(35, true));
-        assert!(BacklightChange::duration_units(7).is_none());
+        assert!(lit().accepts(BacklightChange::Duration(duration(35))));
+        let duration = BacklightDuration::try_from(30).expect("30 is a step");
+        assert_eq!(duration.seconds(), 30);
         assert_eq!(
-            BacklightChange::duration_units(BacklightChange::MAX_DURATION_SECONDS),
-            Some(BacklightChange::MAX_DURATION_UNITS)
+            duration.units(),
+            6,
+            "the feature stores 5-second units; 6 units is the 30 second step"
         );
-        assert!(BacklightChange::duration_units(7_205).is_none());
-        // The feature stores 5-second units. 6 units is the 30 second step.
-        assert_eq!(BacklightChange::seconds_from_units(6), 30);
+        assert_eq!(BacklightDuration::from_units(6), Some(duration));
+        assert_eq!(
+            BacklightDuration::from_units(BacklightDuration::MAX_UNITS),
+            BacklightDuration::try_from(BacklightDuration::MAX_SECONDS).ok()
+        );
+        // The device may report it has no timer written.
+        assert_eq!(BacklightDuration::from_units(0), None);
+        // Each rejection names exactly what a caller typed wrong.
+        assert_eq!(
+            BacklightDuration::try_from(0).unwrap_err(),
+            BacklightDurationError::BelowOneUnit(0)
+        );
+        assert_eq!(
+            BacklightDuration::try_from(7).unwrap_err(),
+            BacklightDurationError::BetweenSteps(7)
+        );
+        assert_eq!(
+            BacklightDuration::try_from(7_205).unwrap_err(),
+            BacklightDurationError::BeyondTwoHours(7_205)
+        );
+        assert_eq!(
+            BacklightDuration::try_from(7_200).err(),
+            None,
+            "two hours is the longest the feature stores"
+        );
     }
 
     #[test]
@@ -499,7 +536,7 @@ mod tests {
             "battery saving on"
         );
         assert_eq!(
-            BacklightChange::Duration(15).to_string(),
+            BacklightChange::Duration(duration(15)).to_string(),
             "backlight duration 15s"
         );
     }
@@ -584,16 +621,19 @@ mod tests {
 
     #[test]
     fn a_duration_changes_only_the_timer() {
-        let shorter = lit().changed(BacklightChange::Duration(15));
+        let shorter = lit().changed(BacklightChange::Duration(duration(15)));
         assert_eq!(
             shorter,
             BacklightState {
-                duration_secs: 15,
+                duration_secs: Some(duration(15)),
                 ..lit()
             }
         );
         // Already on that step: nothing visible would change.
-        assert_eq!(lit().changed(BacklightChange::Duration(30)), lit());
+        assert_eq!(
+            lit().changed(BacklightChange::Duration(duration(30))),
+            lit()
+        );
     }
 
     #[test]
