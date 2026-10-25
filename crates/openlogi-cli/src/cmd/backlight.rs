@@ -65,7 +65,8 @@ pub enum BacklightAction {
     },
     /// How long the keys stay lit after you stop typing, in seconds. A
     /// multiple of 5, from 5 through 7200 (two hours, the longest `0x1982`
-    /// stores). Longer than 30 seconds can drain the battery within minutes.
+    /// stores). Longer than a minute keeps the keys lit much longer, which
+    /// costs battery life.
     Duration {
         /// Seconds, a multiple of 5 from 5 through 7200.
         #[arg(value_name = "SECONDS", value_parser = duration_seconds)]
