@@ -234,6 +234,8 @@ pub(super) fn change_target(
 
 #[cfg(test)]
 mod tests {
+    use openlogi_core::hid::BacklightDuration;
+
     use super::{DurationSteps, EXTENDED_DURATION_SECONDS, SHORT_DURATION_SECONDS};
 
     #[test]
@@ -245,14 +247,14 @@ mod tests {
             .chain(EXTENDED_DURATION_SECONDS)
             .copied()
         {
-            openlogi_core::hid::BacklightDuration::try_from(seconds)
+            BacklightDuration::try_from(seconds)
                 .expect("a panel step is within the two hours `0x1982` stores");
         }
     }
 
     #[test]
     fn contains_agrees_with_the_tables_the_choice_shows() {
-        for seconds in 0..=u16::from(u8::MAX) {
+        for seconds in 0..=BacklightDuration::MAX_SECONDS {
             assert_eq!(
                 SHORT_DURATION_SECONDS.contains(&seconds),
                 DurationSteps::Short.contains(seconds),
