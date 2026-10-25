@@ -107,8 +107,9 @@ bitflags::bitflags! {
     /// machine. Crosses the agent↔GUI IPC inside [`BacklightState`] as a
     /// single byte — changes to that layout require a `PROTOCOL_VERSION`
     /// bump (guarded by `openlogi-ipc/tests/wire_format.rs`) — while
-    /// recorded profiles keep the released schema's four-field object, so a
-    /// profile recorded by v0.8.x still loads and re-records identically.
+    /// recorded profiles write the released three-field object left as
+    /// `automatic`/`level`/`power_save`, plus `duration`, and read that
+    /// shape from released builds.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct BacklightControls: u8 {
         /// Software can switch between the ambient-light sensor choosing the
@@ -150,9 +151,9 @@ impl BacklightControls {
     }
 }
 
-/// Field names of the object shape a released build recorded into profiles.
-/// `duration` may be missing: records written before the v0.8.x timer
-/// shipped predate it.
+/// Field names of the object shape recorded profiles carry: the released
+/// three fields, `duration` new here. Records from released builds have no
+/// `duration` key.
 const CONTROLS_FIELDS: [&str; 4] = ["automatic", "level", "power_save", "duration"];
 
 impl Serialize for BacklightControls {
@@ -161,8 +162,9 @@ impl Serialize for BacklightControls {
         S: serde::Serializer,
     {
         if serializer.is_human_readable() {
-            // The four-field object the released schema wrote, so a recorded
-            // profile keeps its byte shape on re-record.
+            // The released three-field object, written back through this
+            // build's `duration` bit; a re-recorded profile is a release
+            // record plus its `duration` key.
             let mut object = serializer.serialize_struct("BacklightControls", 4)?;
             object.serialize_field("automatic", &self.contains(Self::AUTOMATIC))?;
             object.serialize_field("level", &self.contains(Self::LEVEL))?;
@@ -201,7 +203,8 @@ impl<'de> Visitor<'de> for ControlsVisitor {
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
-            "the recorded four-field backlight controls object or the controls as a bit number",
+            "the recorded backlight controls object (three released fields plus \
+             `duration`) or the controls as a bit number",
         )
     }
 

@@ -230,7 +230,8 @@ fn duration_pills(state: BacklightState, steps: &[u16]) -> impl IntoElement {
             #[expect(
                 clippy::expect_used,
                 reason = "every panel step is covered by \
-                          the-desktop step-validity test; a const constructor does not exist"
+                          `every_step_the_panel_shows_is_a_valid_timer`; a const \
+                          constructor does not exist"
             )]
             let duration = BacklightDuration::try_from(seconds)
                 .expect("the panel only offers steps the keyboard can store");

@@ -1221,7 +1221,7 @@ mod tests {
             encoded.contains(
                 r#""controls":{"automatic":true,"level":true,"power_save":true,"duration":true}"#,
             ),
-            "the controls must re-record as the released four-field object, got: {encoded}"
+            "the controls must re-record as the released three-field object plus `duration`, got: {encoded}"
         );
     }
 
@@ -1241,7 +1241,8 @@ mod tests {
             ProfileSetting::Supported(supported_backlight());
         profile.validate().expect("backlight setting validates");
 
-        // A v0.8.x record carries no `duration` key: it predates the timer.
+        // A record from a released build carries no `duration` key: the
+        // timer has not shipped yet.
         let encoded = serde_json::to_string(&profile).expect("profile serializes");
         let mut record: serde_json::Value = serde_json::from_str(&encoded).expect("profile JSON");
         record
